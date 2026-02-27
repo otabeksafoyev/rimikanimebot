@@ -146,10 +146,10 @@ async function get_required_channels() {
 }
 
 async function get_user_required_channels(user_id, anime = null) {
-  // Global majburiy kanallar (SakuramiTG + /addchannel bilan qo‘shilganlar hammasi)
-  let channels = await get_required_channels();   // <--- BU YER MUHIM O‘ZGARISH
+  // 1. Global majburiy kanallar (SakuramiTG + /addchannel bilan qo‘shilganlar)
+  let channels = await get_required_channels();
 
-  // Region kanallari (agar kerak bo‘lsa)
+  // 2. Region kanallari (agar kerak bo‘lsa)
   const user = await users.findOne({ user_id });
   if (user && user.region) {
     const doc = await settings.findOne({ key: "region_channels" });
@@ -158,23 +158,47 @@ async function get_user_required_channels(user_id, anime = null) {
     }
   }
 
-  // Hamkorning kanali (faqat shu anime hamkor tomonidan qo‘shilgan bo‘lsa)
+  // 3. Hamkorning kanali – ENG MUHIM O‘ZGARTIRISH
   if (anime && anime.added_by) {
-    const partner = await partners.findOne({ user_id: anime.added_by });
-    if (partner && partner.partner_channel) {
-      channels.push(partner.partner_channel);
+    // added_by ni Number ga majburan aylantiramiz (tip muammosini hal qilish uchun)
+    const addedByNum = Number(anime.added_by);
+
+    // Debug log – konsolda ko‘rinadi
+    console.log(`Hamkor qidirilmoqda: added_by = ${addedByNum} (anime: ${anime.title || 'noma\'lum'})`);
+
+    const partner = await partners.findOne({ user_id: addedByNum });
+
+    if (partner) {
+      console.log(`Hamkor topildi: user_id=${partner.user_id}, kanal=${partner.partner_channel || 'yo‘q'}`);
+      
+      if (partner.partner_channel) {
+        let partnerCh = partner.partner_channel.trim();
+        
+        // Agar kanal formati noto‘g‘ri kiritilgan bo‘lsa, to‘g‘rilaymiz
+        if (!partnerCh.startsWith('@') && 
+            !partnerCh.startsWith('-100') && 
+            !partnerCh.startsWith('+')) {
+          partnerCh = `@${partnerCh}`;
+        }
+        
+        channels.push(partnerCh);
+        console.log(`Hamkor kanali qo‘shildi: ${partnerCh}`);
+      } else {
+        console.log(`Hamkorning partner_channel maydoni bo‘sh`);
+      }
+    } else {
+      console.log(`Hamkor topilmadi: user_id = ${addedByNum}`);
     }
   }
 
-  // Anime'ga maxsus qo‘shilgan kanallar
+  // 4. Anime'ga maxsus qo‘shilgan kanallar
   if (anime && anime.required_channels?.length) {
     channels = channels.concat(anime.required_channels);
   }
 
-  // Dublikatlar yo‘q
+  // 5. Dublikatlarni olib tashlash
   return [...new Set(channels)];
 }
-
 
 async function get_subscription_statuses(user_id, channels) {
   const promises = channels.map(async (original_ch) => {
