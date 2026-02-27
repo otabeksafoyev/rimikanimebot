@@ -1251,7 +1251,7 @@ bot.onText(/\/(addchannel|removechannel|listchannels)(?:\s+(.+))?/, async (msg, 
 
   // Aks holda – eski usul: savol berib, keyingi xabarni kutamiz
   if (cmd === "addchannel") {
-    await bot.sendMessage(chatId, "Yangi kanal yuboring:\n\nMisollar:\n• @username\n• -1001234567890\n• https://t.me/+GOb_Ru_TKWkzNjQy\n• +GOb_Ru_TKWkzNjQy");
+    await bot.sendMessage(chatId, "Yangi kanal yuboring:\n\nMisollar:\n• @username\n• -1001234567890\n• https://t.me/+G24Ob_Ru_TKWkzNjQytsdfsd\n• +GOb_Ru_TKWkzNjQy");
     
     const listener = async (res) => {
       if (res.from.id !== msg.from.id) return;
