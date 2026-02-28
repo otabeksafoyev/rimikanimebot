@@ -782,6 +782,60 @@ async function sendWithLoader(chat_id, callback) {
 // ======================
 
 
+
+bot.onText(/\/addadmin(?:\s+(.+))?/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const uid = msg.from.id;
+
+  if (!is_admin(uid)) {
+    return bot.sendMessage(chatId, "❌ Sizda bu buyruqni ishlatish huquqi yo'q. Faqat adminlar qo'sha oladi.");
+  }
+
+  const newAdminIdStr = match[1]?.trim();
+  if (!newAdminIdStr) {
+    return bot.sendMessage(chatId, "Foydalanish: /addadmin <user_id>\nMasalan: /addadmin 123456789");
+  }
+
+  const newAdminId = parseInt(newAdminIdStr);
+  if (isNaN(newAdminId)) {
+    return bot.sendMessage(chatId, "❌ User ID raqam bo'lishi kerak.");
+  }
+
+  if (is_admin(newAdminId)) {
+    return bot.sendMessage(chatId, `❌ ${newAdminId} allaqachon admin.`);
+  }
+
+  // Yangi adminni qo'shamiz
+  ADMIN_IDS.push(newAdminId);
+
+  bot.sendMessage(chatId, `✅ ${newAdminId} adminlar ro'yxatiga qo'shildi!`);
+
+  // Yangi adminni xabardor qilish (ixtiyoriy)
+  try {
+    await bot.sendMessage(newAdminId, "Siz botda admin huquqlariga ega bo'ldingiz! 🎉\nEndi /addanime, /stats va boshqa admin buyruqlarini ishlatishingiz mumkin.");
+  } catch (e) {
+    console.log(`Yangi admin (${newAdminId}) ga xabar yuborib bo'lmadi:`, e.message);
+  }
+
+  console.log(`Admin qo'shildi: ${newAdminId} tomonidan ${uid}`);
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 bot.onText(/\/cancel/, (msg) => {
   const chatId = msg.chat.id;
   const uid = msg.from.id;
