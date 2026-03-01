@@ -700,50 +700,87 @@ bot.on('inline_query', async (query) => {
 // Episode jo‘natish
 // ======================
 async function send_episode(chat_id, serial_id, part = 1) {
-  const anime = await serials.findOne({ _id: serial_id });
-  const episode = await episodes.findOne({ serial_id, part });
-  if (!episode) {
-    bot.sendMessage(chat_id, "❌ Bu qism hali yuklanmagan, azizim! Tez orada yuklaymiz! 😊");
-    return;
-  }
-  await serials.updateOne({ _id: serial_id }, { $inc: { views: 1 } });
-  const markup = { inline_keyboard: [] };
-  const total_parts = anime.total;
-  const PAGE_SIZE = 50;
-  const BUTTONS_PER_ROW = 5;
-  let start, end;
-  if (total_parts <= PAGE_SIZE) {
-    start = 1;
-    end = total_parts + 1;
-  } else {
-    const current_page = Math.ceil(part / PAGE_SIZE);
-    start = (current_page - 1) * PAGE_SIZE + 1;
-    end = Math.min(start + PAGE_SIZE, total_parts + 1);
-  }
-  const existing_parts_docs = await episodes.find({ serial_id, part: { $gte: start, $lt: end } }).project({ part: 1 }).toArray();
-  const existing_parts = new Set(existing_parts_docs.map(doc => doc.part));
-  const buttons = [];
-  for (let p = start; p < end; p++) {
-    const exists = existing_parts.has(p);
-    const label = p === part ? `▶️ ${p}` : (exists ? `${p}` : `${p} ⚠️`);
-    buttons.push({ text: label, callback_data: exists ? `play_${serial_id}_${p}` : "none" });
-  }
-  while (buttons.length > 0) {
-    markup.inline_keyboard.push(buttons.splice(0, BUTTONS_PER_ROW));
-  }
-  const nav = [];
-  if (start > 1) {
-    nav.push({ text: "◀️ Orqaga", callback_data: `play_${serial_id}_${start - PAGE_SIZE}` });
-  }
-  if (end <= total_parts) {
-    nav.push({ text: "Keyingi ▶️", callback_data: `play_${serial_id}_${end}` });
-  }
-  if (nav.length) {
-    markup.inline_keyboard.push(nav);
-  }
-  bot.sendVideo(chat_id, episode.file_id, { caption: `${anime.title} — ${part}-qism – Zavq oling, azizim! 😘`, reply_markup: markup });
-}
+  try {
+    const anime = await serials.findOne({ _id: serial_id });
+    if (!anime) {
+      return bot.sendMessage(chat_id, "❌ Anime topilmadi...");
+    }
 
+    const episode = await episodes.findOne({ serial_id, part });
+    if (!episode) {
+      return bot.sendMessage(chat_id, "❌ Bu qism hali yuklanmagan, azizim! Tez orada yuklaymiz! 😊");
+    }
+
+    // Muhim tekshiruv: file_id mavjud va string ekanligini tekshirish
+    if (!episode.file_id || typeof episode.file_id !== 'string' || episode.file_id.trim() === '') {
+      console.error(`[INVALID FILE_ID] Anime: ${anime.title || serial_id}, Part: ${part}, file_id: ${episode.file_id}`);
+      return bot.sendMessage(chat_id, `❌ ${anime.title} — ${part}-qism video yuklanmagan yoki buzilgan. Admin bilan bog'laning (@${ADMIN_USERNAME})`);
+    }
+
+    // Debug log (muammoni aniqlash uchun)
+    console.log(`[SEND EPISODE] Anime: ${anime.title || serial_id}, Part: ${part}, file_id: ${episode.file_id.substring(0, 20)}...`);
+
+    // Views ni oshirish
+    await serials.updateOne({ _id: serial_id }, { $inc: { views: 1 } });
+
+    // Markup va tugmalar (sizning eski kodingiz)
+    const markup = { inline_keyboard: [] };
+    const total_parts = anime.total;
+    const PAGE_SIZE = 50;
+    const BUTTONS_PER_ROW = 5;
+    let start, end;
+
+    if (total_parts <= PAGE_SIZE) {
+      start = 1;
+      end = total_parts + 1;
+    } else {
+      const current_page = Math.ceil(part / PAGE_SIZE);
+      start = (current_page - 1) * PAGE_SIZE + 1;
+      end = Math.min(start + PAGE_SIZE, total_parts + 1);
+    }
+
+    const existing_parts_docs = await episodes.find({ serial_id, part: { $gte: start, $lt: end } }).project({ part: 1 }).toArray();
+    const existing_parts = new Set(existing_parts_docs.map(doc => doc.part));
+
+    const buttons = [];
+    for (let p = start; p < end; p++) {
+      const exists = existing_parts.has(p);
+      const label = p === part ? `▶️ ${p}` : (exists ? `${p}` : `${p} ⚠️`);
+      buttons.push({ text: label, callback_data: exists ? `play_${serial_id}_${p}` : "none" });
+    }
+
+    while (buttons.length > 0) {
+      markup.inline_keyboard.push(buttons.splice(0, BUTTONS_PER_ROW));
+    }
+
+    const nav = [];
+    if (start > 1) {
+      nav.push({ text: "◀️ Orqaga", callback_data: `play_${serial_id}_${start - PAGE_SIZE}` });
+    }
+    if (end <= total_parts) {
+      nav.push({ text: "Keyingi ▶️", callback_data: `play_${serial_id}_${end}` });
+    }
+    if (nav.length) {
+      markup.inline_keyboard.push(nav);
+    }
+
+    // Video yuborish – try-catch ichida
+    await bot.sendVideo(chat_id, episode.file_id, {
+      caption: `${anime.title} — ${part}-qism – Zavq oling, azizim! 😘`,
+      reply_markup: markup
+    });
+
+  } catch (err) {
+    console.error(`[SEND_EPISODE_ERROR] Anime: ${serial_id}, Part: ${part}`, err.message);
+
+    // Foydalanuvchiga tushunarli xabar
+    bot.sendMessage(chat_id, 
+      "❌ Video yuborishda xato yuz berdi.\n" +
+      "Bu qism yuklanmagan yoki eskirgan bo'lishi mumkin.\n" +
+      "Admin bilan bog'laning: @" + ADMIN_USERNAME
+    );
+  }
+}
 
 async function sendWithLoader(chat_id, callback) {
   const loaderFrames = ["⌛", "⏳", "💫", "✨"];
