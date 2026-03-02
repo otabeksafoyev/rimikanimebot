@@ -12,7 +12,7 @@ const MONGO_URL = process.env.MONGO_URL;
 const UPLOAD_CHANNEL = "Sakuramibacent"; 
 const SUB_CHANNEL = "SakuramiTG";
 const NEWS_CHANNEL = "SakuramiTG";
-const ADMIN_IDS = [8173188671, 8248009618];
+const ADMIN_IDS = [8173188671];
 const ADMIN_USERNAME = "safoyev9225";
 const BOT_VERSION = "2.5.0";
 
@@ -578,7 +578,6 @@ bot.on('callback_query', async (query) => {
         [{ text: "🎬 Anime boshqaruvi", callback_data: "admin_anime_menu" }],
         [{ text: "🤝 Hamkorlar", callback_data: "admin_partners_menu" }],
         [{ text: "🚫 Foydalanuvchilar / Ban", callback_data: "admin_users_ban" }],
-        [{ text: "📢 E'lonlar / News", callback_data: "admin_news_menu" }],
         [{ text: "⚙️ Sozlamalar", callback_data: "admin_settings" }],
         [{ text: "📊 Statistika", callback_data: "admin_stats" }],
         [{ text: "← Chiqish", callback_data: "back_to_start" }]
@@ -614,9 +613,13 @@ bot.on('callback_query', async (query) => {
   }
 
   // Admin tekshiruvi (faqat admin bo'limlar uchun)
-  if (!is_admin(user_id) && query.data.includes("admin_") || query.data.includes("news_") || query.data.includes("settings_")) {
-    return bot.sendMessage(chat_id, "🚫 Bu bo‘lim faqat adminlar uchun.");
-  }
+  const isAdminSection = query.data.includes("admin_") || 
+  query.data.includes("news_") || 
+  query.data.includes("settings_");
+
+if (isAdminSection && !is_admin(user_id)) {
+return bot.sendMessage(chat_id, "🚫 Bu bo‘lim faqat adminlar uchun.");
+}
 
   // Anime menyusi
   if (query.data === "admin_anime_menu") {
@@ -675,10 +678,6 @@ bot.on('callback_query', async (query) => {
     }
     return;
   }
-
-
-
-
 
 
   else if (query.data === "admin_stats") {
@@ -776,7 +775,6 @@ bot.on('callback_query', async (query) => {
       inline_keyboard: [
         [
           { text: "📢 Majburiy kanallar", callback_data: "settings_channels" },
-          { text: "🌍 Region so‘rovi", callback_data: "settings_region_survey" }
         ],
         [
           { text: "📰 News kanallar", callback_data: "settings_news_channels" },
@@ -1343,50 +1341,6 @@ else if (query.data === "settings_news_channels") {
   // yoki to'g'ridan-to'g'ri edit qilish mumkin, lekin oddiy xabar sifatida qoldirdim
 }
 
-// 24. Region so'rovi sozlamalari (settings_region_survey)
-else if (query.data === "settings_region_survey") {
-  if (!is_admin(query.from.id)) {
-    return bot.sendMessage(chat_id, "🚫 Faqat adminlar uchun.");
-  }
-
-  // Agar sizda global o'zgaruvchi yoki DB dan o'qish yo'q bo'lsa, shu joyda oddiy default qiymatdan foydalanamiz
-  // Misol uchun: global o'zgaruvchi (bot.js boshida aniqlang)
-  // const regionSurveyEnabled = true; // yoki false
-
-  // yoki DB dan o'qish (agar settings collection bor bo'lsa)
-  let regionSurveyEnabled = false; // default
-
-  try {
-    const setting = await settings.findOne({ key: "region_survey_enabled" });
-    if (setting) regionSurveyEnabled = setting.value === true || setting.value === "true";
-  } catch (err) {
-    console.error("Region survey status o'qish xatosi:", err);
-  }
-
-  const statusText = regionSurveyEnabled ? "yoqilgan ✅" : "o'chirilgan ❌";
-
-  const text = `🌍 <b>Region so'rovi holati</b>: ${statusText}\n\n` +
-               `Bu funksiya foydalanuvchilardan viloyatni so'rashni boshqaradi.\n` +
-               `Hozirgi holatni o'zgartirmoqchimisiz?`;
-
-  const kb = {
-    inline_keyboard: [
-      [{ text: regionSurveyEnabled ? "O'chirish ❌" : "Yoqish ✅", callback_data: "toggle_region_survey" }],
-      [{ text: "← Orqaga", callback_data: "admin_settings" }]
-    ]
-  };
-
-  try {
-    await bot.editMessageText(text, {
-      chat_id,
-      message_id: query.message.message_id,
-      parse_mode: "HTML",
-      reply_markup: kb
-    });
-  } catch (err) {
-    bot.sendMessage(chat_id, text, { parse_mode: "HTML", reply_markup: kb });
-  }
-}
 
 // 25. Bot holatini yangilash / refresh (settings_refresh)
 else if (query.data === "settings_refresh") {
@@ -1650,10 +1604,8 @@ Quyidagi bo‘limlardan birini tanlang:
     inline_keyboard: [
       [
         { text: "🎬 Anime boshqaruvi", callback_data: "admin_anime_menu" },
-        { text: "📼 Qismlarni yuklash", callback_data: "admin_upload_parts" }
       ],
       [
-        { text: "📢 E'lon / News", callback_data: "admin_news_publish" },
         { text: "🌟 Yangi anime qo'shish", callback_data: "admin_add_anime" }
       ],
       [
@@ -1675,6 +1627,45 @@ Quyidagi bo‘limlardan birini tanlang:
     reply_markup: markup
   });
 });
+
+
+
+
+
+
+
+bot.onText(/\/news_list_channels/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  if (!is_admin(userId)) {
+    return bot.sendMessage(chatId, "🚫 Bu buyrug‘ faqat adminlar uchun.");
+  }
+
+  const channels = await get_news_channels(); // sizda allaqachon bor funksiya
+
+  let text = "📰 <b>News kanallar ro'yxati</b>\n\n";
+  
+  if (channels.length === 0) {
+    text += "Hozircha hech qanday news kanal qo'shilmagan.\nAsosiy kanal: @SakuramiTG";
+  } else {
+    channels.forEach(ch => {
+      let display = ch;
+      if (ch.startsWith('@')) display = ch;
+      else if (ch.startsWith('-100')) display = `Guruh ID: ${ch}`;
+      else display = ch;
+      text += `• ${display}\n`;
+    });
+    text += `\nJami: ${channels.length} ta kanal`;
+  }
+
+  bot.sendMessage(chatId, text, { parse_mode: "HTML" });
+});
+
+
+
+
+
 
 
 
