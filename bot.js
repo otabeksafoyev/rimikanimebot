@@ -64,7 +64,7 @@ async function connectToMongo() {
       socketTimeoutMS: 45000,
     });
 
-    db = client.db(); // yoki db nomi: client.db('animebot')
+    db = client.db("anime_bot"); // yoki db nomi: client.db('animebot')
     serials = db.collection('serials');
     episodes = db.collection('episodes');
     users = db.collection('users');
@@ -671,7 +671,6 @@ bot.on('callback_query', async (query) => {
         inline_keyboard: [
           [
             epNumber > 1 ? { text: "◀️ Oldingi", callback_data: `episode:${animeId}:${epNumber-1}` } : { text: " ", callback_data: "ignore" },
-            { text: "🔙 Ro'yxatga", callback_data: `episodes:${animeId}:1` },
             { text: "Keyingi ▶️", callback_data: `episode:${animeId}:${epNumber+1}` }
           ],
           [{ text: "← Anime tanlash", callback_data: "back_to_anime_list" }]
@@ -694,16 +693,16 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  if (data.startsWith("episodes:") || data.startsWith("page:")) {
+  if (data.startsWith("episodes:")) {
     const parts = data.split(":");
     if (parts.length < 3) return;
-
     const animeId = parts[1];
-    const page = Number(parts[2]) || 1;
+    const pageStart = Number(parts[2]) || 1;
 
-    bot.sendMessage(chat_id, `Anime ${animeId} — sahifa ${page} (test)`);
-    return;
-  }
+    // Biz pagination limitni 12 (PAGE_SIZE) qildik
+    const partNumber = pageStart; 
+    return send_episode(chat_id, animeId, partNumber);
+}
 
   // ──────────────────────────────────────────────
   // PLAY / CHECK_SUB_PLAY
@@ -747,7 +746,7 @@ bot.on('callback_query', async (query) => {
         inline_keyboard: [
           [
             epNumber > 1 ? { text: "◀️ Oldingi", callback_data: `check_sub_play_${animeUUID}_${epNumber-1}` } : { text: " ", callback_data: "ignore" },
-            { text: "🔙 Ro'yxatga", callback_data: `episodes_${animeUUID}_1` },
+      
             { text: "Keyingi ▶️", callback_data: `check_sub_play_${animeUUID}_${epNumber+1}` }
           ]
         ]
@@ -953,67 +952,34 @@ if (data === "add_required_channel") {
 }
 
 // Majburiy kanal o'chirish
+// Majburiy kanal o'chirish
 if (data === "remove_required_channel") {
   if (!is_admin(user_id)) {
-    bot.sendMessage(chat_id, "🚫 Faqat adminlar uchun.");
-    return;
+      return bot.sendMessage(chat_id, " Faqat adminlar uchun.");
   }
+  bot.sendMessage(chat_id, " O'chirmoqchi bo'lgan kanalni yuboring (@username yoki -100... ID):");
+  bot.once('message', async (remMsg) => {
+      if (remMsg.from.id !== user_id) return;
+      const channel = remMsg.text?.trim();
+      if (!channel) return bot.sendMessage(chat_id, "❌ Hech narsa kiritilmadi.");
 
-  bot.sendMessage(chat_id, "🗑 O'chirmoqchi bo'lgan kanalni yuboring (@username yoki -100... ID):");
-
-  const remListener = async (msg) => {
-    // faqat shu foydalanuvchi yuborgan xabarni qayta ishlash
-    if (msg.from.id !== user_id) return;
-
-    // listenerni o'chirib tashlash (bir marta ishlasin)
-    bot.removeListener('message', remListener);
-
-    const channel = msg.text?.trim();
-    
-    if (!channel) {
-      bot.sendMessage(chat_id, "❌ Hech narsa kiritilmadi.");
-      return;
-    }
-
-    try {
-      // Agar sizda majburiy kanallar array da saqlansa (oddiy variant)
-      if (Array.isArray(requiredChannels)) {
-        const index = requiredChannels.indexOf(channel);
-        if (index !== -1) {
-          requiredChannels.splice(index, 1);
-          bot.sendMessage(chat_id, `✅ Kanal ro'yxatdan o'chirildi: ${channel}`);
-        } else {
-          bot.sendMessage(chat_id, `Kanal ro'yxatda topilmadi: ${channel}`);
-        }
-        return;
+      try {
+          const result = await db.collection('settings').updateOne(
+              { key: "additional_channels" },
+              { $pull: { channels: channel } }
+          );
+          if (result.modifiedCount > 0) {
+              bot.sendMessage(chat_id, `✅ Kanal o‘chirildi: ${channel}`);
+          } else {
+              bot.sendMessage(chat_id, `❌ Bazada bunday kanal topilmadi: ${channel}`);
+          }
+      } catch (err) {
+          console.error("Kanal o'chirishda xato:", err);
+          bot.sendMessage(chat_id, "Xatolik yuz berdi, kanal o‘chirilmadi.");
       }
-
-      // Agar MongoDB collection da saqlansa (real loyiha uchun tavsiya)
-      const result = await db.collection('required_channels').deleteOne({ channel: channel });
-      
-      if (result.deletedCount > 0) {
-        bot.sendMessage(chat_id, `✅ Kanal bazadan o'chirildi: ${channel}`);
-      } else {
-        bot.sendMessage(chat_id, `Kanal bazada topilmadi: ${channel}`);
-      }
-
-    } catch (err) {
-      console.error("Kanal o'chirishda xato:", err);
-      bot.sendMessage(chat_id, "Xatolik yuz berdi. Kanal o'chirilmadi 😔");
-    }
-  };
-
-  // listenerni qo'shamiz
-  bot.on('message', remListener);
-
-  // 5 daqiqadan keyin avtomatik o'chirib qo'yish (eski listener qolmasligi uchun)
-  setTimeout(() => {
-    bot.removeListener('message', remListener);
-  }, 5 * 60 * 1000); // 5 daqiqa
-
+  });
   return;
 }
-
 
 
 
@@ -1537,46 +1503,47 @@ async function send_episode(chat_id, serial_id, part = 1) {
     await serials.updateOne({ _id: serial_id }, { $inc: { views: 1 } });
 
     // Markup va tugmalar (sizning eski kodingiz)
-    const markup = { inline_keyboard: [] };
-    const total_parts = anime.total;
-    const PAGE_SIZE = 50;
-    const BUTTONS_PER_ROW = 5;
-    let start, end;
+   // Pagination uchun limitni 12 ga o‘zgartiramiz
+const markup = { inline_keyboard: [] };
+const total_parts = anime.total;
+const PAGE_SIZE = 12; // ⬅️ 12‑ta limit
+const BUTTONS_PER_ROW = 4; // tugma satrida 4 ta bo‘lsin (ixtiyoriy)
+let start = 1 + (Math.floor((part - 1) / PAGE_SIZE) * PAGE_SIZE);
+let end = Math.min(start + PAGE_SIZE - 1, total_parts);
 
-    if (total_parts <= PAGE_SIZE) {
-      start = 1;
-      end = total_parts + 1;
-    } else {
-      const current_page = Math.ceil(part / PAGE_SIZE);
-      start = (current_page - 1) * PAGE_SIZE + 1;
-      end = Math.min(start + PAGE_SIZE, total_parts + 1);
-    }
+// Bazadagi mavjud qismlar
+const existing_parts_docs = await episodes.find({
+  serial_id,
+  part: { $gte: start, $lte: end }
+}).project({ part: 1 }).toArray();
+const existing_parts = new Set(existing_parts_docs.map(d => d.part));
 
-    const existing_parts_docs = await episodes.find({ serial_id, part: { $gte: start, $lt: end } }).project({ part: 1 }).toArray();
-    const existing_parts = new Set(existing_parts_docs.map(doc => doc.part));
+// Episode knopkalarini yaratish
+const buttons = [];
+for (let p = start; p <= end; p++) {
+  const exists = existing_parts.has(p);
+  const label = p === part ? `▶️ ${p}` : `${p}`;
+  buttons.push({
+    text: label,
+    callback_data: exists ? `play_${serial_id}_${p}` : "ignore"
+  });
+  if (buttons.length === BUTTONS_PER_ROW) {
+    markup.inline_keyboard.push(buttons.splice(0));
+  }
+}
+if (buttons.length) markup.inline_keyboard.push(buttons);
 
-    const buttons = [];
-    for (let p = start; p < end; p++) {
-      const exists = existing_parts.has(p);
-      const label = p === part ? `▶️ ${p}` : (exists ? `${p}` : `${p} ⚠️`);
-      buttons.push({ text: label, callback_data: exists ? `play_${serial_id}_${p}` : "none" });
-    }
-
-    while (buttons.length > 0) {
-      markup.inline_keyboard.push(buttons.splice(0, BUTTONS_PER_ROW));
-    }
-
-    const nav = [];
-    if (start > 1) {
-      nav.push({ text: "◀️ Orqaga", callback_data: `play_${serial_id}_${start - PAGE_SIZE}` });
-    }
-    if (end <= total_parts) {
-      nav.push({ text: "Keyingi ▶️", callback_data: `play_${serial_id}_${end}` });
-    }
-    if (nav.length) {
-      markup.inline_keyboard.push(nav);
-    }
-
+// 📍 Oldingi / Keyingi sahifalar tugmalari
+const nav = [];
+if (start > 1) nav.push({
+  text: "⬅️ Oldingi",
+  callback_data: `episodes:${serial_id}:${start - PAGE_SIZE}`
+});
+if (end < total_parts) nav.push({
+  text: "Keyingi ➡️",
+  callback_data: `episodes:${serial_id}:${end + 1}`
+});
+if (nav.length) markup.inline_keyboard.push(nav);
     // Video yuborish – try-catch ichida
     await bot.sendVideo(chat_id, episode.file_id, {
       caption: `${anime.title} — ${part}-qism – Zavq oling, azizim! 😘`,
