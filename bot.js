@@ -559,70 +559,256 @@ bot.on('web_app_data', async (msg) => {
 
 
 bot.on('callback_query', async (query) => {
+  // Har doim callback query'ga javob berish kerak (loading belgisini to'xtatadi)
   try {
     await bot.answerCallbackQuery(query.id);
   } catch (e) {
-    if (!e.message.includes('query is too old')) {
+    if (!e.message?.includes('query is too old')) {
       console.error('answerCallbackQuery xatosi:', e);
     }
   }
 
-  const chat_id = query.message.chat.id;
-  const user_id = query.from.id;
+  // Agar xabar yo'q bo'lsa (eski callback yoki inline holat), chiqib ketamiz
+  if (!query.message) return;
 
-  // UNIVERSAL "ORQAGA" tugmasi – hammasi uchun ishlaydi
-  if (query.data === "admin_main" || query.data === "back_to_admin" || query.data.endsWith("_back") || query.data === "back") {
+  const chat_id    = query.message.chat.id;
+  const message_id = query.message.message_id;
+  const user_id    = query.from.id;
+  const data       = query.data;
+
+  // ──────────────────────────────────────────────
+  // 1. ORQAGA / ASOSIY MENYU universal tugmalari
+  // ──────────────────────────────────────────────
+  if (data === "admin_main" || data === "back_to_admin" ||
+      data.endsWith("_back") || data === "back" ||
+      data === "back_to_start") {
+
+    if (data === "back_to_start") {
+      await send_start_banner(chat_id);
+      return;
+    }
+
     const text = "⚙️ <b>Asosiy boshqaruv paneli</b>\n\nTanlang:";
     const kb = {
       inline_keyboard: [
-        [{ text: "🎬 Anime boshqaruvi", callback_data: "admin_anime_menu" }],
-        [{ text: "🤝 Hamkorlar", callback_data: "admin_partners_menu" }],
+        [{ text: "🎬 Anime boshqaruvi",     callback_data: "admin_anime_menu" }],
+        [{ text: "🤝 Hamkorlar",            callback_data: "admin_partners_menu" }],
         [{ text: "🚫 Foydalanuvchilar / Ban", callback_data: "admin_users_ban" }],
-        [{ text: "⚙️ Sozlamalar", callback_data: "admin_settings" }],
-        [{ text: "📊 Statistika", callback_data: "admin_stats" }],
-        [{ text: "← Chiqish", callback_data: "back_to_start" }]
+        [{ text: "⚙️ Sozlamalar",          callback_data: "admin_settings" }],
+        [{ text: "📊 Statistika",           callback_data: "admin_stats" }],
+        [{ text: "← Chiqish",               callback_data: "back_to_start" }]
       ]
     };
+
     try {
       await bot.editMessageText(text, {
         chat_id,
-        message_id: query.message.message_id,
+        message_id,
         parse_mode: "HTML",
         reply_markup: kb
       });
-    } catch (err) {
+    } catch {
       bot.sendMessage(chat_id, text, { parse_mode: "HTML", reply_markup: kb });
     }
     return;
   }
 
-  // Foydalanuvchi callbacklari (o'zgarmaydi)
-  if (query.data.startsWith("set_region_")) {
-    const region = query.data.replace("set_region_", "");
+  // ──────────────────────────────────────────────
+  // 2. Region tanlash
+  // ──────────────────────────────────────────────
+  if (data.startsWith("set_region_")) {
+    const region = data.replace("set_region_", "");
     if (REGIONS.includes(region)) {
-      await users.updateOne({ user_id: user_id }, { $set: { region } });
+      await users.updateOne({ user_id }, { $set: { region } });
       bot.sendMessage(chat_id, `Rahmat! Siz ${region} ni tanladingiz 🌟`);
-      try { await bot.deleteMessage(chat_id, query.message.message_id); } catch {}
+      try { await bot.deleteMessage(chat_id, message_id); } catch {}
     }
     return;
   }
 
-  if (query.data === "back_to_start") {
-    await send_start_banner(chat_id);
+  // ──────────────────────────────────────────────
+  // 3. Admin bo'limlariga kirishni cheklash
+  // ──────────────────────────────────────────────
+  const isAdminSection = data.includes("admin_") || 
+                         data.includes("news_") || 
+                         data.includes("settings_");
+
+  if (isAdminSection && !is_admin(user_id)) {
+    bot.sendMessage(chat_id, "🚫 Bu bo‘lim faqat adminlar uchun.");
     return;
   }
 
-  // Admin tekshiruvi (faqat admin bo'limlar uchun)
-  const isAdminSection = query.data.includes("admin_") || 
-  query.data.includes("news_") || 
-  query.data.includes("settings_");
+  // ──────────────────────────────────────────────
+  // ★★★ ENG MUHIMI: ANIME QISMLARI UCHUN HANDLER ★★★
+  // ──────────────────────────────────────────────
 
-if (isAdminSection && !is_admin(user_id)) {
-return bot.sendMessage(chat_id, "🚫 Bu bo‘lim faqat adminlar uchun.");
-}
+  // Agar tugma "episode:anime_id:raqam" formatida bo'lsa
+  if (data.startsWith("episode:")) {
+    const parts = data.split(":");
+    if (parts.length !== 3) {
+      console.log("Noto'g'ri episode callback:", data);
+      return;
+    }
 
-  // Anime menyusi
-  if (query.data === "admin_anime_menu") {
+    const animeId = parts[1];
+    const epNumber = Number(parts[2]);
+
+    try {
+      const episode = await episodes.findOne({
+        serial_id: animeId,
+        number: epNumber
+      });
+
+      if (!episode) {
+        await bot.sendMessage(chat_id, `№${epNumber} qism topilmadi 😔`);
+        return;
+      }
+
+      let caption = `🎬 ${episode.title || `Qism ${epNumber}`}`;
+      if (episode.description) caption += `\n\n${episode.description}`;
+
+      // Tugmalar qatori
+      const kb = {
+        inline_keyboard: [
+          [
+            epNumber > 1 
+              ? { text: "◀️ Oldingi", callback_data: `episode:${animeId}:${epNumber-1}` }
+              : { text: " ", callback_data: "ignore" },
+            
+            { text: "🔙 Ro'yxatga", callback_data: `episodes:${animeId}:1` },
+            
+            { text: "Keyingi ▶️", callback_data: `episode:${animeId}:${epNumber+1}` }
+          ],
+          [{ text: "← Anime tanlash", callback_data: "back_to_anime_list" }] // o'zingiz moslashtiring
+        ]
+      };
+
+      if (episode.file_id) {
+        await bot.sendVideo(chat_id, episode.file_id, {
+          caption,
+          parse_mode: "HTML",
+          reply_markup: kb
+        });
+      } else if (episode.video_url) {
+        await bot.sendVideo(chat_id, episode.video_url, {
+          caption,
+          parse_mode: "HTML",
+          reply_markup: kb
+        });
+      } else {
+        await bot.sendMessage(chat_id, caption + "\n\nVideo hali yuklanmagan.", {
+          parse_mode: "HTML",
+          reply_markup: kb
+        });
+      }
+
+      // Ko'rishlar sonini oshirish (ixtiyoriy)
+      await serials.updateOne({ _id: animeId }, { $inc: { views: 1 } });
+
+    } catch (err) {
+      console.error("Qismni yuborishda xato:", err);
+      bot.sendMessage(chat_id, "Qismni ochib bo'lmadi, keyinroq urinib ko'ring 😢");
+    }
+    return;
+  }
+
+  // Qismlar ro'yxatini sahifalash (pagination)
+  if (data.startsWith("episodes:") || data.startsWith("page:")) {
+    const parts = data.split(":");
+    if (parts.length < 3) return;
+
+    const animeId = parts[1];
+    const page = Number(parts[2]) || 1;
+
+    // Bu joyni o'zingizning qismlarni chiqarish logikangiz bilan almashtirishingiz mumkin
+    bot.sendMessage(chat_id, `Anime ${animeId} — sahifa ${page} (hozircha test)`);
+    // keyinchalik bu yerga pagination kodini qo'shasiz
+    return;
+  }
+
+
+   // ──────────────────────────────────────────────
+  // ★★★ REAL QISM TUGMALARI (check_sub_play_...) ★★★
+  // ──────────────────────────────────────────────
+  else if (data.startsWith("check_sub_play_") || data.startsWith("play_")) {
+    
+    let cleanData = data;
+    if (data.startsWith("check_sub_play_")) {
+      cleanData = data.replace("check_sub_play_", "play_");
+    }
+
+    const parts = cleanData.split("_");
+    if (parts.length !== 3) {
+      console.log("❌ Noto'g'ri format:", data);
+      return;
+    }
+
+    const animeUUID = parts[1];
+    const epNumber  = Number(parts[2]);
+
+    console.log(`🔍 Qidirilmoqda → serial_id: ${animeUUID} | qism: ${epNumber}`);
+
+    try {
+      const episode = await episodes.findOne({
+        serial_id: animeUUID,      // UUID string sifatida
+        number: epNumber
+      });
+
+      if (!episode) {
+        console.log(`❌ Topilmadi! serial_id=${animeUUID}, number=${epNumber}`);
+        await bot.sendMessage(chat_id, `№${epNumber} qism topilmadi 😔\n\nID: ${animeUUID}`);
+        return;
+      }
+
+      console.log(`✅ Topildi! File ID: ${episode.file_id || "yo'q"}`);
+
+      let caption = `🎬 ${episode.title || `Qism ${epNumber}`}`;
+      if (episode.description) caption += `\n\n${episode.description}`;
+
+      const kb = {
+        inline_keyboard: [
+          [
+            epNumber > 1 ? { text: "◀️ Oldingi", callback_data: `check_sub_play_${animeUUID}_${epNumber-1}` } : { text: " ", callback_data: "ignore" },
+            { text: "🔙 Ro'yxatga", callback_data: `episodes_${animeUUID}_1` },
+            { text: "Keyingi ▶️", callback_data: `check_sub_play_${animeUUID}_${epNumber+1}` }
+          ]
+        ]
+      };
+
+      if (episode.file_id) {
+        await bot.sendVideo(chat_id, episode.file_id, { caption, parse_mode: "HTML", reply_markup: kb });
+      } else if (episode.video_url) {
+        await bot.sendVideo(chat_id, episode.video_url, { caption, parse_mode: "HTML", reply_markup: kb });
+      } else {
+        await bot.sendMessage(chat_id, caption + "\n\n📥 Video hali yuklanmagan.", { parse_mode: "HTML", reply_markup: kb });
+      }
+
+      await serials.updateOne({ uuid: animeUUID }, { $inc: { views: 1 } });
+
+    } catch (err) {
+      console.error("Play handler xatosi:", err);
+      await bot.sendMessage(chat_id, "Xatolik yuz berdi 😢");
+    }
+
+    return;
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+  // ──────────────────────────────────────────────
+  // Qolgan admin menyulari (sizning eski kodingiz)
+  // ──────────────────────────────────────────────
+
+  if (data === "admin_anime_menu") {
     const text = `🎬 <b>Anime boshqaruvi</b>\n\nTanlang:`;
     const kb = {
       inline_keyboard: [
@@ -635,90 +821,16 @@ return bot.sendMessage(chat_id, "🚫 Bu bo‘lim faqat adminlar uchun.");
       ]
     };
     try {
-      await bot.editMessageText(text, { chat_id, message_id: query.message.message_id, parse_mode: "HTML", reply_markup: kb });
+      await bot.editMessageText(text, { chat_id, message_id, parse_mode: "HTML", reply_markup: kb });
     } catch {
       bot.sendMessage(chat_id, text, { parse_mode: "HTML", reply_markup: kb });
     }
     return;
   }
 
-  // Qismlarni yuklash (hamkorlar uchun @animeseriya_bot ga o'tkazish)
-  if (query.data === "upload_episodes" || query.data === "qismlarni_yuklash") {
-    if (!is_admin(user_id) && !(await is_partner(user_id))) {
-      return bot.sendMessage(chat_id, "❌ Bu funksiya faqat admin yoki hamkorlar uchun!");
-    }
-
-    const kb = {
-      inline_keyboard: [[
-        { text: "➡️ @animeseriya_bot ga o'tish", url: "https://t.me/animeseriya_bot?start=upload" }
-      ]]
-    };
-
-    bot.sendMessage(chat_id, "📤 Qismlarni yuklash uchun @animeseriya_bot ga o'ting va /start bosing.", { reply_markup: kb });
-    return;
-  }
-
-  // E'lonlar / News menyusi (to'liq ishlaydi)
-  if (query.data === "admin_news_menu") {
-    const text = `📢 <b>E'lonlar & Yangiliklar bo'limi</b>\n\nTanlang:`;
-    const kb = {
-      inline_keyboard: [
-        [{ text: "➕ Yangi anime e'lon qilish", callback_data: "news_publish_anime" }],
-        [{ text: "➕ Oddiy e'lon yuborish", callback_data: "news_send_message" }],
-        [{ text: "📋 News kanallar ro'yxati", callback_data: "news_list_channels" }],
-        [{ text: "← Orqaga", callback_data: "admin_main" }]
-      ]
-    };
-
-    try {
-      await bot.editMessageText(text, { chat_id, message_id: query.message.message_id, parse_mode: "HTML", reply_markup: kb });
-    } catch (err) {
-      console.log("News menu edit xatosi:", err.message);
-      bot.sendMessage(chat_id, text, { parse_mode: "HTML", reply_markup: kb });
-    }
-    return;
-  }
 
 
-  else if (query.data === "admin_stats") {
-    // Admin ekanligini querydan tekshirish (msg emas!)
-    const userId = query.from.id;
-    if (!is_admin(userId)) {
-      return bot.sendMessage(chat_id, "🚫 Bu bo‘lim faqat adminlar uchun.");
-    }
-  
-    // Statistika hisoblash
-    const total_users = await users.countDocuments({});
-    const total_anime = await serials.countDocuments({});
-    const total_episodes = await episodes.countDocuments({});
-    const total_views = (await serials.aggregate([{ $group: { _id: null, total: { $sum: "$views" } } }]).toArray())[0]?.total || 0;
-    const top5 = await serials.find().sort({ views: -1 }).limit(5).toArray();
-  
-    let text = `
-  📊 <b>Bot Statistika</b>\n\n
-  👥 Foydalanuvchilar: <b>${total_users}</b>\n
-  🎬 Anime soni: <b>${total_anime}</b>\n
-  📼 Qismlar soni: <b>${total_episodes}</b>\n
-  👁 Jami ko‘rishlar: <b>${total_views}</b>\n\n
-  <b>🔥 Top 5 anime:</b>\n`;
-  
-    top5.forEach((a, i) => {
-      text += `${i + 1}. ${a.title} — ${a.views || 0} ko‘rish\n`;
-    });
-  
-    const regionCounts = await users.aggregate([{ $group: { _id: "$region", count: { $sum: 1 } } }]).toArray();
-    const unanswered = await users.countDocuments({ region: { $exists: false } });
-    text += "\n<b>Viloyatlar bo'yicha:</b>\n";
-    regionCounts.forEach(rc => {
-      text += `${rc._id || "Noma'lum"}: ${rc.count}\n`;
-    });
-    text += `Javob bermagan: ${unanswered}\n\n`;
-  
-    text += "← <a href=\"tg://msg?text=/admin\">Orqaga</a>";
-  
-    // Xabarni to‘g‘ri yuborish — chat_id ishlatiladi
-    bot.sendMessage(chat_id, text, { parse_mode: "HTML" });
-  }
+
 
   // ──────────────────────────────────────────────
   // ★★★ BU YERDAN BOSHLAB SIZ O'ZINGIZ QO'SHASIZ ★★★
@@ -1421,6 +1533,13 @@ else if (query.data === "admin_news_menu") {
     console.log(`Noma'lum callback data: ${query.data}`);
   }
 });
+
+
+
+
+
+
+
 
 // ======================
 // Inline query – bo'sh queryda va qidiruvda top 30 ta, qidiruvda views bo'yicha sort
