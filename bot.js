@@ -626,6 +626,7 @@ bot.on('web_app_data', async (msg) => {
 // ======================
 
 bot.on('callback_query', async (query) => {
+
   try {
     await bot.answerCallbackQuery(query.id);
   } catch (e) {
@@ -1223,6 +1224,57 @@ if (data === "news_remove_channel") {
   bot.on('message', listener);
   return;
 }
+
+
+
+
+
+
+
+
+
+
+
+// ──────────────────────────────────────────────
+// SOZLAMALAR — MAJBURIY KANALLAR
+// ──────────────────────────────────────────────
+if (data === "settings_channels") {
+  if (!is_admin(user_id)) {
+    return bot.sendMessage(chat_id, "🚫 Bu bo‘lim faqat adminlar uchun.");
+  }
+
+  const channels = await get_required_channels(); // bor funktsiya
+  let text = "📢 <b>Majburiy obuna kanallari</b>\n\n";
+
+  if (channels.length === 0) {
+    text += "Hozircha majburiy kanal yo‘q.";
+  } else {
+    channels.forEach(ch => {
+      text += `• ${ch}\n`;
+    });
+  }
+
+  const kb = {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "➕ Kanal qo'shish", callback_data: "add_required_channel" }],
+        [{ text: "🗑 Kanal o'chirish", callback_data: "remove_required_channel" }],
+        [{ text: "← Orqaga", callback_data: "admin_settings" }]
+      ]
+    }
+  };
+
+  try {
+    await bot.editMessageText(text, { chat_id, message_id, parse_mode: "HTML", ...kb });
+  } catch {
+    await bot.sendMessage(chat_id, text, { parse_mode: "HTML", ...kb });
+  }
+  return;
+}
+
+
+
+
 
 
 
