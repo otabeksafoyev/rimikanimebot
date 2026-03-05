@@ -19,6 +19,48 @@ const BOT_VERSION = "2.5.0";
 
 const ADMIN_CHAT_LINK = "https://t.me/safoyev9225";
 
+
+
+
+// ==========================
+// Majburiy kanal qo'shish funksiyasi
+// ==========================
+async function add_required_channel(channel) {
+  if (!channel) return;
+
+  if (!channel.startsWith('@') && !channel.startsWith('-100')) {
+      channel = '@' + channel;
+  }
+
+  try {
+      await db.collection('settings').updateOne(
+          { key: "additional_channels" },
+          { 
+              $addToSet: { channels: channel },
+              $setOnInsert: { key: "additional_channels" }
+          },
+          { upsert: true }
+      );
+      console.log(`Majburiy kanal qo‘shildi: ${channel}`);
+
+      // requiredChannels global array ga ham qo'shamiz
+      if (!requiredChannels.includes(channel)) requiredChannels.push(channel);
+
+  } catch (err) {
+      console.error("Kanal qo‘shishda xato:", err);
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
 // Bot – polling dastlab o‘chirilgan
 const bot = new TelegramBot(TOKEN, { polling: false });
 let BOT_USERNAME = 'RimikAnime_bot';
@@ -47,8 +89,14 @@ const REGIONS = [
 
 
 
- const userStates = new Map();  // user_id → { action: 'waiting_for_add_channel', ... }
+
+
+// ======================
 // MongoDB ulanish
+// ======================
+// ======================
+// MongoDB ulanish
+// ======================
 async function connectToMongo() {
   try {
     console.log("MongoDB ga ulanish boshlanmoqda...");
@@ -68,7 +116,7 @@ async function connectToMongo() {
 
     console.log("✅ MongoDB ga muvaffaqiyatli ulanildi!");
 
-    
+    // Mana shu yerga qo'ying — ulanishdan keyin
     // Majburiy kanallar ro'yxatini bazadan yuklash
     try {
       const channelsData = await db.collection('required_channels').find().toArray();
@@ -442,59 +490,57 @@ async function send_region_survey(chat_id) {
 
 
 
-
-
-// Message handler
 bot.on('message', async (msg) => {
   if (!msg.text) return;
 
   const text = msg.text.trim();
   const uid = msg.from.id;
-  const chatId = msg.chat.id;
 
-  // 1. Komanda bo‘lsa — faqat /start payload ishlaydi, qolgan komandalarni o‘tkazib yuboramiz
+  // 🔴 1. Agar komanda bo‘lsa:
+  // Faqat /start payload ishlaydi, qolgan komandalarni to‘xtatamiz
   if (text.startsWith('/') && !text.startsWith('/start ')) {
     return;
   }
 
-  // 2. Foydalanuvchini bazaga qo'shish (sizda bor)
+  // 2. Foydalanuvchini bazaga qo'shish
   await users.updateOne(
     { user_id: uid },
     { $setOnInsert: { user_id: uid } },
     { upsert: true }
   );
 
-  // ───────────────────────────────────────────────
-  // STATE LARNI TEKSHIRISH (eng yuqorida bo'lishi kerak)
-  // ───────────────────────────────────────────────
-
-  // A. Anime qo'shish step'lari (sizda bor logika)
   const stepData = addAnimeSteps.get(uid);
+
+  // 🔵 STEP MODE
   if (stepData) {
+    const chat_id = msg.chat.id;
+
     switch (stepData.step) {
       case 'title':
         stepData.data.title = text;
         stepData.step = 'total';
-        return bot.sendMessage(chatId, "Nechta qismi bor? 😊");
+        return bot.sendMessage(chat_id, "Nechta qismi bor? 😊");
 
       case 'total':
         stepData.data.total = parseInt(text) || 1;
         stepData.step = 'genres';
-        return bot.sendMessage(chatId, "Janrlarini yozing (masalan: Action, Fantasy) ✨");
+        return bot.sendMessage(chat_id, "Janrlarini yozing (masalan: Action, Fantasy) ✨");
 
       case 'genres':
         stepData.data.genres = text;
         stepData.step = 'custom_id';
-        return bot.sendMessage(chatId, "Custom ID kiriting (masalan: naruto, one-piece) 🌟");
+        return bot.sendMessage(chat_id, "Custom ID kiriting (masalan: naruto, one-piece) 🌟");
 
       case 'custom_id':
+        // 🔹 Custom ID bandligini tekshirish
         const existing = await serials.findOne({ custom_id: text.trim() });
         if (existing) {
-          return bot.sendMessage(chatId, "❌ Bu custom ID band. Iltimos, boshqasini kiriting:");
+          return bot.sendMessage(chat_id, "❌ Bu custom ID band. Iltimos, boshqasini kiriting:");
         }
+
         stepData.data.custom_id = text.trim();
         stepData.step = 'trailer';
-        return bot.sendMessage(chatId, "Treyler videoni yuboring 🎬");
+        return bot.sendMessage(chat_id, "Treyler videoni yuboring 🎬");
 
       default:
         addAnimeSteps.delete(uid);
@@ -502,53 +548,7 @@ bot.on('message', async (msg) => {
     }
   }
 
- // B. Admin paneldan majburiy kanal qo'shish holati (va boshqa state'lar)
-const state = userStates.get(uid);
-
-if (state) {
-  // 1. Majburiy kanal qo'shish jarayoni
-  if (state.action === 'waiting_for_add_channel') {
-    // Agar xabar komanda bo'lsa — e'tibor bermaymiz (masalan /cancel, /admin)
-    if (text.startsWith('/')) {
-      bot.sendMessage(chatId, "Kanal nomini yuboring yoki /cancel deb yozing.");
-      return;
-    }
-
-    try {
-      const result = await add_required_channel(text);
-
-      bot.sendMessage(chatId, result.message || "Operatsiya bajarildi.");
-
-      // Agar muvaffaqiyatli bo'lsa — admin menyusiga qaytish (ixtiyoriy, lekin foydali)
-      if (result.success) {
-        // bot.sendMessage(chatId, "Admin panelga qaytdingiz.", {
-        //   reply_markup: { inline_keyboard: adminMenuKeyboard } // sizning admin menyuingiz bo'lsa
-        // });
-      }
-
-      userStates.delete(uid);
-    } catch (err) {
-      console.error("Kanal qo'shish jarayonida xato:", err);
-      bot.sendMessage(chatId, "Xato yuz berdi. Iltimos qayta urinib ko'ring yoki admin bilan bog'laning.");
-      userStates.delete(uid); // state ni tozalash muhim, aks holda bot "qotib" qoladi
-    }
-
-    return; // bu state ishlagan bo'lsa, keyingi kodlarga o'tmaslik kerak
-  }
-
-  // 2. Kelajakda boshqa admin yoki user action'lari uchun joy
-  // if (state.action === 'waiting_for_something_else') { ... }
-
-  // Agar noma'lum action bo'lsa — state ni tozalash (xavfsizlik uchun)
-  console.warn(`Noma'lum state action: ${state.action} (user: ${uid})`);
-  userStates.delete(uid);
-  return;
-}
-
-  // ───────────────────────────────────────────────
-  // ODDIY XABARLAR / PAYLOAD / START PAYLOAD
-  // ───────────────────────────────────────────────
-
+  // 🔵 ODDIY MESSAGE HANDLER
   let payload = text;
 
   // Agar /start payload bo‘lsa
@@ -571,69 +571,29 @@ if (state) {
 
   if (!anime) {
     return bot.sendMessage(
-      chatId,
+      msg.chat.id,
       "❌ Anime topilmadi! Yana urinib ko‘ring 😊"
     );
   }
 
-  // Epizod mavjudligini tekshirish
+
+
   if (await episodes.findOne({ serial_id: anime._id, part })) {
-    return check_subscription_and_proceed(chatId, anime._id, part);
+    return check_subscription_and_proceed(msg.chat.id, anime._id, part);
   }
 
   if (await episodes.findOne({ serial_id: anime._id, part: 1 })) {
-    return check_subscription_and_proceed(chatId, anime._id, 1);
+    return check_subscription_and_proceed(msg.chat.id, anime._id, 1);
   }
 
-  // Epizod yo'q bo'lsa — trailer + poster
-  return send_trailer_with_poster(chatId, anime);
+  return send_trailer_with_poster(msg.chat.id, anime);
 });
 
 
 
+// /start
 bot.onText(/\/start$/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = msg.from.id;
-
-  // Ban tekshiruvi (agar mavjud bo‘lsa saqlab qolamiz, kodda bor)
-  if (await is_banned(userId)) {
-    return bot.sendMessage(chatId, `Siz botdan bloklangansiz. Admin: @${ADMIN_USERNAME}`);
-  }
-
-  // Majburiy kanallarni olish (joriy kodda allaqachon bor funksiya)
-  const channels = await get_required_channels();  // Bu funksiya SUB_CHANNEL + DB dan qo‘shimcha kanallarni qaytaradi
-
-  // Agar hech qanday majburiy kanal bo‘lmasa – to‘g‘ridan-to‘g‘ri banner
-  if (channels.length === 0) {
-    return await send_start_banner(chatId);
-  }
-
-  // Obuna holatini tekshirish
-  const isSub = await is_subscribed(userId, channels);
-
-  if (isSub) {
-    // Obuna bo‘lgan – oddiy banner
-    await send_start_banner(chatId);
-  } else {
-    // Obuna bo‘lmagan – tugmalar chiqarish
-    const statuses = await get_subscription_statuses(userId, channels);
-    const unsubList = statuses.filter(s => !s.subscribed);
-
-    let text = "Botdan foydalanish uchun quyidagi kanal(lar)ga obuna bo‘ling:\n\n";
-    const keyboard = { inline_keyboard: [] };
-
-    unsubList.forEach(status => {
-      keyboard.inline_keyboard.push([
-        { text: `Obuna bo'lish → ${status.channel.replace('@', '')}`, url: status.url }
-      ]);
-    });
-
-    keyboard.inline_keyboard.push([
-      { text: "✅ Tekshirish", callback_data: "check_start_sub" }
-    ]);
-
-    bot.sendMessage(chatId, text, { reply_markup: keyboard, parse_mode: "HTML" });
-  }
+  await send_start_banner(msg.chat.id);
 });
 
 // Web App data
@@ -987,31 +947,21 @@ bot.on('callback_query', async (query) => {
 
 
 
-  if (query.data === "check_start_sub") {
-    const chatId = query.message.chat.id;
-    const userId = query.from.id;
-    const messageId = query.message.message_id;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   
-    const channels = await get_required_channels();
-  
-    if (await is_subscribed(userId, channels)) {
-      // Obuna tasdiqlandi – eski xabarni o‘chirib, banner yuborish
-      bot.deleteMessage(chatId, messageId).catch(() => {});
-      await send_start_banner(chatId);
-      bot.answerCallbackQuery(query.id, { text: "Obuna tasdiqlandi! Xush kelibsiz 🎉" });
-    } else {
-      bot.answerCallbackQuery(query.id, {
-        text: "Hali barcha kanallarga obuna bo‘lmagansiz. Iltimos obuna bo‘ling va qayta bosing.",
-        show_alert: true
-      });
-    }
-  }
-
-
-
-
-
-
 
 // Majburiy kanallar menyusi
 if (data === "settings_channels") {
@@ -1042,78 +992,26 @@ if (data === "settings_channels") {
   return;
 }
 
+if (data === "add_required_channel") {
+  if (!is_admin(user_id)) return;
 
-async function add_required_channel(channel) {
-  try {
-    let cleanChannel = String(channel).trim();
+  bot.sendMessage(chat_id, "➕ Majburiy kanalni yuboring (@username yoki -100 ID):");
 
-    // agar @ yoki -100 bilan boshlanmasa — @ qo'shamiz
-    if (!cleanChannel.startsWith('@') && !cleanChannel.startsWith('-100')) {
-      cleanChannel = `@${cleanChannel}`;
-    }
+  const addListener = async (msg) => {
+      if (msg.from.id !== user_id) return;
 
-    // juda qisqa yoki bo'sh bo'lsa rad etamiz
-    if (cleanChannel.length < 5) {
-      return { success: false, message: "Kanal nomi juda qisqa. Masalan: @RimikaUz yoki RimikaUz" };
-    }
+      bot.removeListener('message', addListener); // listenerni o'chiramiz
+      const channel = msg.text.trim();
 
-    // bazada bor-yo'qligini tekshiramiz
-    const exists = await db.collection('required_channels').findOne({ channel: cleanChannel });
-    if (exists) {
-      return { success: false, message: `Bu kanal allaqachon qo'shilgan: ${cleanChannel}` };
-    }
+      await add_required_channel(channel); // endi xato bo‘lmaydi
+      bot.sendMessage(chat_id, `✅ Kanal qo'shildi: ${channel}`);
+  };
 
-    // bazaga saqlaymiz
-    await db.collection('required_channels').insertOne({
-      channel: cleanChannel,
-      added_at: new Date()
-    });
-
-    // xotiradagi ro'yxatni yangilaymiz
-    if (!requiredChannels.includes(cleanChannel)) {
-      requiredChannels.push(cleanChannel);
-    }
-
-    console.log(`Majburiy kanal qo'shildi: ${cleanChannel}`);
-
-    return {
-      success: true,
-      message: `✅ Kanal muvaffaqiyatli qo'shildi: ${cleanChannel}`
-    };
-  } catch (err) {
-    console.error("add_required_channel xatosi:", err.message);
-    return {
-      success: false,
-      message: "Xato yuz berdi. Qayta urinib ko'ring yoki admin bilan bog'laning."
-    };
-  }
+  bot.on('message', addListener);
+  return;
 }
-
-
-
-if (query.data === 'add_required_channel') {
-  const chatId = query.message.chat.id;
-
-  bot.sendMessage(chatId, "Majburiy qilmoqchi bo'lgan kanal usernamesini yuboring (masalan: @SakuramiTG yoki SakuramiTG):", {
-    reply_markup: { force_reply: true }
-  });
-
-  userStates.set(chatId, { action: 'waiting_for_add_channel' });   // ← endi ishlaydi
-
-  bot.answerCallbackQuery(query.id);
-}
-
-
-
-
-
-
-
-
-
-
-
 // Majburiy kanal o'chirish
+
 if (data === "remove_required_channel") {
   if (!is_admin(user_id)) {
       return bot.sendMessage(chat_id, " Faqat adminlar uchun.");
