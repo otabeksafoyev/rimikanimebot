@@ -10,6 +10,7 @@ require('dotenv').config()
 const TOKEN = process.env.TOKEN;
 const MONGO_URL = process.env.MONGO_URL; 
 const UPLOAD_CHANNEL = "Sakuramibacent"; 
+let newsChannels = [];
 let requiredChannels = [];
 const SUB_CHANNEL = "SakuramiTG";
 const NEWS_CHANNEL = "SakuramiTG";
@@ -94,9 +95,6 @@ const REGIONS = [
 // ======================
 // MongoDB ulanish
 // ======================
-// ======================
-// MongoDB ulanish
-// ======================
 async function connectToMongo() {
   try {
     console.log("MongoDB ga ulanish boshlanmoqda...");
@@ -116,15 +114,24 @@ async function connectToMongo() {
 
     console.log("✅ MongoDB ga muvaffaqiyatli ulanildi!");
 
-    // Mana shu yerga qo'ying — ulanishdan keyin
-    // Majburiy kanallar ro'yxatini bazadan yuklash
+    // --- Majburiy kanallarni yuklash ---
     try {
       const channelsData = await db.collection('required_channels').find().toArray();
       requiredChannels = channelsData.map(doc => doc.channel);
       console.log('Majburiy kanallar yuklandi:', requiredChannels);
     } catch (err) {
       console.error('Majburiy kanallarni yuklashda xato:', err);
-      requiredChannels = []; // xato bo'lsa bo'sh ro'yxat
+      requiredChannels = [];
+    }
+
+    // --- News kanallarni yuklash ---
+    try {
+      const newsData = await db.collection('news_channels').find().toArray();
+      newsChannels = newsData.map(doc => doc.channel);
+      console.log('News kanallar yuklandi:', newsChannels);
+    } catch (err) {
+      console.error('News kanallarni yuklashda xato:', err);
+      newsChannels = [];
     }
 
   } catch (err) {
@@ -132,7 +139,6 @@ async function connectToMongo() {
     process.exit(1);
   }
 }
-
 // ======================
 // DB tayyorligini tekshirish
 // ======================
@@ -619,7 +625,6 @@ bot.on('web_app_data', async (msg) => {
 // Callback query
 // ======================
 
-
 bot.on('callback_query', async (query) => {
   try {
     await bot.answerCallbackQuery(query.id);
@@ -639,10 +644,11 @@ bot.on('callback_query', async (query) => {
   // ──────────────────────────────────────────────
   // ORQAGA / ASOSIY MENYU
   // ──────────────────────────────────────────────
-  if (data === "admin_main" || data === "back_to_admin" ||
-      data.endsWith("_back") || data === "back" ||
-      data === "back_to_start") {
-
+  if (
+    data === "admin_main" || data === "back_to_admin" ||
+    data.endsWith("_back") || data === "back" ||
+    data === "back_to_start"
+  ) {
     if (data === "back_to_start") {
       await send_start_banner(chat_id);
       return;
@@ -651,19 +657,27 @@ bot.on('callback_query', async (query) => {
     const text = "⚙️ <b>Asosiy boshqaruv paneli</b>\n\nTanlang:";
     const kb = {
       inline_keyboard: [
-        [{ text: "🎬 Anime boshqaruvi",     callback_data: "admin_anime_menu" }],
-        [{ text: "🤝 Hamkorlar",            callback_data: "admin_partners_menu" }],
+        [{ text: "🎬 Anime boshqaruvi",        callback_data: "admin_anime_menu" }],
+        [{ text: "🤝 Hamkorlar",               callback_data: "admin_partners_menu" }],
         [{ text: "🚫 Foydalanuvchilar / Ban", callback_data: "admin_users_ban" }],
-        [{ text: "⚙️ Sozlamalar",          callback_data: "admin_settings" }],
-        [{ text: "📊 Statistika",           callback_data: "admin_stats" }],
-        [{ text: "← Chiqish",               callback_data: "back_to_start" }]
+        [{ text: "⚙️ Sozlamalar",             callback_data: "admin_settings" }],
+        [{ text: "📊 Statistika",              callback_data: "admin_stats" }],
+        [{ text: "← Chiqish",                  callback_data: "back_to_start" }]
       ]
     };
 
     try {
-      await bot.editMessageText(text, { chat_id, message_id, parse_mode: "HTML", reply_markup: kb });
+      await bot.editMessageText(text, {
+        chat_id,
+        message_id,
+        parse_mode: "HTML",
+        reply_markup: kb
+      });
     } catch {
-      bot.sendMessage(chat_id, text, { parse_mode: "HTML", reply_markup: kb });
+      bot.sendMessage(chat_id, text, {
+        parse_mode: "HTML",
+        reply_markup: kb
+      });
     }
     return;
   }
@@ -681,7 +695,9 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // ──────────────────────────────────────────────
   // Admin bo'limlariga kirishni cheklash
+  // ──────────────────────────────────────────────
   const isAdminSection = data.includes("admin_") || data.includes("news_") || data.includes("settings_");
   if (isAdminSection && !is_admin(user_id)) {
     bot.sendMessage(chat_id, "🚫 Bu bo‘lim faqat adminlar uchun.");
@@ -950,7 +966,34 @@ bot.on('callback_query', async (query) => {
 
 
 
+  async function add_news_channel(channel) {
+    if (!channel) return;
 
+    // Faqat @username yoki -100 ID ruxsat
+    if (channel.startsWith("https://t.me/")) {
+        // linkdan username ajratish
+        const parts = channel.split("/");
+        channel = "@" + parts[parts.length - 1];
+    }
+
+    if (!channel.startsWith("@") && !channel.startsWith("-100")) {
+        channel = "@" + channel;
+    }
+
+    // DB va global arrayga qo‘shish
+    try {
+        await db.collection('settings').updateOne(
+            { key: "news_channels" },
+            { $addToSet: { channels: channel }, $setOnInsert: { key: "news_channels" } },
+            { upsert: true }
+        );
+        if (!newsChannels.includes(channel)) newsChannels.push(channel);
+
+        console.log(`News kanal qo‘shildi: ${channel}`);
+    } catch (err) {
+        console.error("News kanal qo‘shishda xato:", err);
+    }
+}
 
 
 
@@ -964,22 +1007,24 @@ bot.on('callback_query', async (query) => {
   
 
 // Majburiy kanallar menyusi
-if (data === "settings_channels") {
-  if (!is_admin(user_id)) return bot.sendMessage(chat_id, "Faqat adminlar uchun.");
+if (data === "settings_news_channels") {
+  if (!is_admin(user_id)) return bot.sendMessage(chat_id, "🚫 Faqat adminlar uchun.");
 
-  const channels = await get_required_channels(); // sizda bor funksiya
+  const channels = await get_news_channels(); // Sizda bor funksiya bo'lishi kerak
 
-  let text = "📢 <b>Majburiy obuna kanallari</b>\n\n";
+  let text = "📰 <b>News kanallar ro'yxati</b>\n\n";
   if (channels.length === 0) {
-    text += "Hozircha majburiy kanal yo‘q.";
+    text += "Hozircha hech qanday news kanal qo'shilmagan.";
   } else {
-    channels.forEach(ch => text += `• ${ch}\n`);
+    channels.forEach(ch => {
+      text += `• ${ch}\n`;
+    });
   }
 
   const kb = {
     inline_keyboard: [
-      [{ text: "➕ Kanal qo'shish", callback_data: "add_required_channel" }],
-      [{ text: "🗑 Kanal o'chirish", callback_data: "remove_required_channel" }],
+      [{ text: "➕ Kanal qo'shish", callback_data: "news_add_channel" }],
+      [{ text: "🗑 Kanal o'chirish", callback_data: "news_remove_channel" }],
       [{ text: "← Orqaga", callback_data: "admin_settings" }]
     ]
   };
@@ -991,7 +1036,6 @@ if (data === "settings_channels") {
   }
   return;
 }
-
 if (data === "add_required_channel") {
   if (!is_admin(user_id)) return;
 
@@ -1032,6 +1076,8 @@ if (data === "remove_required_channel") {
           } else {
               bot.sendMessage(chat_id, `❌ Bazada bunday kanal topilmadi: ${channel}`);
           }
+
+
       } catch (err) {
           console.error("Kanal o'chirishda xato:", err);
           bot.sendMessage(chat_id, "Xatolik yuz berdi, kanal o‘chirilmadi.");
@@ -1039,6 +1085,149 @@ if (data === "remove_required_channel") {
   });
   return;
 }
+
+
+
+
+if (data.startsWith("confirm_publish_")) {
+  if (!is_admin(user_id)) return bot.sendMessage(chat_id, "🚫 Faqat adminlar uchun.");
+
+  const animeId = data.replace("confirm_publish_", "");
+  const anime = await findAnime(animeId);
+  if (!anime) return bot.sendMessage(chat_id, "Anime topilmadi.");
+
+  const channels = await get_news_channels(); // senga kerakli funksiyani ishlat
+  if (channels.length === 0) return bot.sendMessage(chat_id, "Hech qanday news kanal topilmadi.");
+
+  const message = `🎬 Yangi anime e'lon qilindi!\n\n<b>${anime.title}</b>\n\nKod: ${anime.custom_id || anime._id}`;
+  
+  for (let ch of channels) {
+    try { 
+      await bot.sendMessage(ch, message, { parse_mode: "HTML" });
+    } catch (err) {
+      console.error(`Kanalga yuborishda xato: ${ch}`, err.message);
+    }
+  }
+
+  bot.sendMessage(chat_id, `✅ ${anime.title} barcha news kanallarga yuborildi.`);
+  return;
+}
+
+if (data === "cancel_publish") {
+  bot.sendMessage(chat_id, "E'lon bekor qilindi.");
+  return;
+}
+
+
+
+
+
+
+
+if (data === "news_send_message") {
+  if (!is_admin(user_id)) return bot.sendMessage(chat_id, "🚫 Faqat adminlar uchun.");
+
+  bot.sendMessage(chat_id, "Yubormoqchi bo'lgan xabar matnini yozing:");
+
+  const listener = async (msg) => {
+    if (msg.from.id !== user_id) return;
+    bot.removeListener('message', listener);
+
+    const text = msg.text?.trim();
+    if (!text) return bot.sendMessage(chat_id, "❌ Hech narsa kiritilmadi.");
+
+    const channels = await get_news_channels();
+    if (channels.length === 0) return bot.sendMessage(chat_id, "Hech qanday news kanal topilmadi.");
+
+    for (let ch of channels) {
+      try { 
+        await bot.sendMessage(ch, text, { parse_mode: "HTML" });
+      } catch (err) {
+        console.error(`Kanalga yuborishda xato: ${ch}`, err.message);
+      }
+    }
+
+    bot.sendMessage(chat_id, "✅ Xabar barcha news kanallarga yuborildi.");
+  };
+
+  bot.on('message', listener);
+  return;
+}
+
+
+
+
+
+
+
+if (data === "news_add_channel") {
+  if (!is_admin(user_id)) return bot.sendMessage(chat_id, "Faqat adminlar uchun.");
+
+  bot.sendMessage(chat_id, "➕ News kanalini yuboring (@username yoki -100 ID):");
+
+  const listener = async (msg) => {
+    if (msg.from.id !== user_id) return;
+    bot.removeListener('message', listener);
+
+    const channel = msg.text?.trim();
+    if (!channel) return bot.sendMessage(chat_id, "❌ Hech narsa kiritilmadi.");
+
+    await add_news_channel(channel);
+    bot.sendMessage(chat_id, `✅ Kanal qo‘shildi: ${channel}`);
+  };
+
+  bot.on('message', listener);
+  return;
+}
+
+
+
+
+
+
+
+
+
+
+
+if (data === "news_remove_channel") {
+  if (!is_admin(user_id)) return bot.sendMessage(chat_id, "Faqat adminlar uchun.");
+
+  bot.sendMessage(chat_id, "🗑 O'chirmoqchi bo‘lgan news kanalini yuboring (@username yoki -100 ID):");
+
+  const listener = async (msg) => {
+    if (msg.from.id !== user_id) return;
+    bot.removeListener('message', listener);
+
+    const channel = msg.text?.trim();
+    if (!channel) return bot.sendMessage(chat_id, "❌ Hech narsa kiritilmadi.");
+
+    try {
+      const res = await db.collection('settings').updateOne(
+        { key: "news_channels" },
+        { $pull: { channels: channel } }
+      );
+
+      if (res.modifiedCount > 0) {
+        newsChannels = newsChannels.filter(ch => ch !== channel);
+        bot.sendMessage(chat_id, `✅ Kanal o‘chirildi: ${channel}`);
+      } else {
+        bot.sendMessage(chat_id, `❌ Bazada bunday kanal topilmadi: ${channel}`);
+      }
+    } catch (err) {
+      console.error("News kanal o'chirishda xato:", err);
+      bot.sendMessage(chat_id, "Xatolik yuz berdi, kanal o‘chirilmadi.");
+    }
+  };
+
+  bot.on('message', listener);
+  return;
+}
+
+
+
+
+
 
 
 
