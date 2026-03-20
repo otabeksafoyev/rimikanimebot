@@ -14,7 +14,7 @@ let newsChannels = [];
 let requiredChannels = [];
 const SUB_CHANNEL = "SakuramiTG";
 const NEWS_CHANNEL = "SakuramiTG";
-const ADMIN_IDS = [8173188671];
+const ADMIN_IDS = [8173188671 , 8306639956, 6629617057];
 const ADMIN_USERNAME = "safoyev9225";
 const BOT_VERSION = "2.5.0";
 
